@@ -1,652 +1,219 @@
 #include "F28x_Project.h"
+#include "math.h"
 void sysctl(void);
-void EPWMInit(void);
-int main(void)
-float error;
-float current_value;
-float previous_error;
-float output;
-float set_value;
-float time_change,kp,ki,kd,integral,derivative;
+void EPWM(void);
+__interrupt void epwm1ISR(void);
+__interrupt void epwm2ISR(void);
+__interrupt void epwm3ISR(void);
+
+
+//void ADCA_Init(void);
+//float pid_init();
+//void SysClk(void);
+//void InitTimer0(void);
+//void QEP(void);
+//void timer1(void);
+//__interrupt void ADCISR(void);
+//__interrupt void Timer0ISR(void);
+//__interrupt void EQEPisr(void);
+//int Digital_Result[5];
+//int a[5];
+//int pid[5];
+//int u;
+//float v, w,y;
+//int y;
+
+
+int t = 0;
+float duty;
+int lkb[5];
+
+
+double pi  =  3.141592653589793;
+
+void main(void)
 {
-    sysctl();
 
-    EPWMInit();
+sysctl();
+EPWM();
+DINT;
+      IER=00;
+      EALLOW;
+      PieCtrlRegs.PIECTRL.bit.ENPIE=1; // Enable the PIE.
+      PieVectTable.EPWM1_INT=&epwm1ISR ;//  16 channels 12 groups
+      PieVectTable.EPWM2_INT=&epwm2ISR ;
+      PieVectTable.EPWM3_INT=&epwm3ISR ;
+      PieCtrlRegs.PIEIER3.bit.INTx1 = 1;
+      PieCtrlRegs.PIEIER3.bit.INTx2 =  1;
+      PieCtrlRegs.PIEIER3.bit.INTx3 = 1;
 
-    if(AdcaRegs.ADCINTFLGCLR.bit.ADCINT1==1)
+      PieCtrlRegs.PIEACK.bit.ACK3 = 1;
+      IER=0xffff;
+      EINT;
+      EDIS;
+
+}
+void sysctl(void)
     {
-        if(Result[1]>>12)
-            {
-                EPwm1Regs.CMPA.bit.CMPA=700;
-
-
-            }
-            else if(Result[1]<<12){
-                EPwm1Regs.CMPA.bit.CMPA = 400;
-            }
-        pid_init();
-
-
+        int i;
+        EALLOW;
+        ClkCfgRegs.CLKSRCCTL1.bit.OSCCLKSRCSEL = 0 ;  // INTOSC 2 i am using - 10MHZ
+        ClkCfgRegs.SYSPLLCTL1.bit.PLLCLKEN = 0 ;     //  PLLCLKEN
+        for(i=0;i<5;i++)
+        {
+            ClkCfgRegs.SYSPLLCTL1.bit.PLLEN = 0 ;         // i need to  get 1khz///
+            ClkCfgRegs.SYSPLLMULT.bit.IMULT = 16 ;        //integer multiplier factor.
+            ClkCfgRegs.SYSPLLMULT.bit.FMULT = 4;         // fractional multiplier factor. 80mhz
+            while(ClkCfgRegs.SYSPLLSTS.bit.LOCKS !=1);
+        }
+        ClkCfgRegs.SYSCLKDIVSEL.bit.PLLSYSCLKDIV = 0;  //40mhz
+        ClkCfgRegs.SYSPLLCTL1.bit.PLLCLKEN = 1 ;
+        ClkCfgRegs.SYSCLKDIVSEL.bit.PLLSYSCLKDIV = 5 ;  //4MHZ
+        ClkCfgRegs.LOSPCP.bit.LSPCLKDIV = 0 ;
+        EDIS;
     }
-    while(1);
 
 
+
+
+void EPWM(void){
+      EALLOW;
+
+
+       ClkCfgRegs.PERCLKDIVSEL.bit.EPWMCLKDIV=0;// EPWM clock - System clk division   SYSCLK/1
+       GpioCtrlRegs.GPAMUX1.bit.GPIO0=01;//configuring gpio pin
+       GpioCtrlRegs.GPAGMUX1.bit.GPIO0=00;
+
+       GpioCtrlRegs.GPADIR.bit.GPIO0=01;
+       GpioCtrlRegs.GPAMUX1.bit.GPIO2=01;//configuring gpio pin
+       GpioCtrlRegs.GPAGMUX1.bit.GPIO2=00;
+       GpioCtrlRegs.GPADIR.bit.GPIO2=1;
+
+       GpioCtrlRegs.GPAMUX1.bit.GPIO4=01;//configuring gpio pin
+       GpioCtrlRegs.GPAGMUX1.bit.GPIO4=00;
+       GpioCtrlRegs.GPADIR.bit.GPIO4=01;
+
+       CpuSysRegs.PCLKCR2.bit.EPWM2=1;//enable pwm clk   //40 pin
+       CpuSysRegs.PCLKCR2.bit.EPWM1=1;                   //38 pin
+       CpuSysRegs.PCLKCR2.bit.EPWM3=1;                   //36 pin
+       CpuSysRegs.PCLKCR0.bit.TBCLKSYNC=0;//synchronization of the time base
+
+       EPwm1Regs.TBCTL.bit.HSPCLKDIV=2;
+       EPwm1Regs.TBPRD=2000;//set the TB period
+       EPwm1Regs.TBCTL.bit.CTRMODE=3;
+       EPwm1Regs.CMPA.bit.CMPA = (int)duty;
+
+      EPwm2Regs.TBCTL.bit.HSPCLKDIV=2;  //SYSCLK/2 = 2MHZ
+      EPwm2Regs.TBPRD=2000;//set the TB period                    17.6 = 960
+      EPwm2Regs.TBCTL.bit.CTRMODE=2;//TB mode, up downcounter mode,period 18.2 =              810
+      EPwm2Regs.CMPA.bit.CMPA = (int)duty ;//re module,compare register // 19.2 volts =  710 = 40
+                                                                  //  20 volts           = 500 =  50                                       //  22.4volts                    = 350 = 60
+         EPwm3Regs.TBCTL.bit.HSPCLKDIV=2;                            // 28.8   = 70,210
+         EPwm3Regs.TBPRD=2000;//set the TB period  2MHZ/2000 = 1000HZ     // 42 v = 80 = 120
+         EPwm3Regs.TBCTL.bit.CTRMODE=2;//TB mode,counter mode,period
+         EPwm3Regs.CMPA.bit.CMPA = (int)duty;//compare module,compare register
+
+         EPwm1Regs.AQCTLA.bit.ZRO=0;//action qualifier
+         EPwm1Regs.AQCTLA.bit.CAU=3;
+
+         EPwm2Regs.AQCTLA.bit.ZRO=0;//action qualifier
+         EPwm2Regs.AQCTLA.bit.CAU=3;
+
+         EPwm3Regs.AQCTLA.bit.ZRO=0;//action qualifier
+         EPwm3Regs.AQCTLA.bit.CAU=3;
+
+
+
+         EPwm1Regs.TBCTL.bit.PHSEN=1;//phase loading enable
+         EPwm2Regs.TBCTL.bit.PHSEN=1;
+         EPwm3Regs.TBCTL.bit.PHSEN=1;
+
+         EPwm1Regs.TBPHS.bit.TBPHS= 1233;
+         EPwm2Regs.TBPHS.bit.TBPHS= 667;
+         EPwm3Regs.TBPHS.bit.TBPHS = 0;
+
+        EPwm3Regs.ETSEL.bit.INTSELCMP = 0;// compared with cmpa interrupt should generate.
+
+        EPwm1Regs.ETSEL.bit.INTEN = 1; // interrupt enable.
+        EPwm1Regs.ETSEL.bit.INTSEL = 4;
+        EPwm1Regs.ETCLR.bit.INT =  1;
+
+        EPwm2Regs.ETSEL.bit.INTEN = 1; // interrupt enable.
+        EPwm2Regs.ETSEL.bit.INTSEL = 5;
+        EPwm2Regs.ETCLR.bit.INT =  1;
+
+        EPwm3Regs.ETSEL.bit.INTEN = 1; // interrupt enable.
+        EPwm3Regs.ETSEL.bit.INTSEL = 1;
+        EPwm3Regs.ETCLR.bit.INT =  1;
+
+
+        CpuSysRegs.PCLKCR0.bit.TBCLKSYNC=1;
 
 
 }
-void EPWMInit(void)
-{
-    EALLOW;
-    ClkCfgRegs.PERCLKDIVSEL.bit.EPWMCLKDIV=1;//clk division enable
-    GpioCtrlRegs.GPAMUX1.bit.GPIO0=01;//configuring gpio pin
-    GpioCtrlRegs.GPAGMUX1.bit.GPIO0=00;
-    GpioCtrlRegs.GPADIR.bit.GPIO0=1;
-    GpioCtrlRegs.GPAMUX1.bit.GPIO2=01;//configuring gpio pin
-    GpioCtrlRegs.GPAGMUX1.bit.GPIO2=00;
-    GpioCtrlRegs.GPADIR.bit.GPIO2=1;
-    GpioCtrlRegs.GPAMUX1.bit.GPIO4=01;//configuring gpio pin
-    GpioCtrlRegs.GPAGMUX1.bit.GPIO4=00;
-    GpioCtrlRegs.GPADIR.bit.GPIO4=1;
-    CpuSysRegs.PCLKCR2.bit.EPWM1=1;//enable pwm clk
-    CpuSysRegs.PCLKCR2.bit.EPWM2=1;
-    CpuSysRegs.PCLKCR2.bit.EPWM3=1;
-    CpuSysRegs.PCLKCR0.bit.TBCLKSYNC=0;//synchronization of the time base
 
-    EPwm1Regs.TBCTL.bit.HSPCLKDIV=2;
-    EPwm1Regs.TBPRD=1000;//set the TB period
-    EPwm1Regs.TBCTL.bit.CTRMODE=2;//TB mode,counter mode,period
-    EPwm1Regs.CMPA.bit.CMPA=700;//compare module,compare register
+__interrupt void epwm1ISR(void){
+   EALLOW;
 
+      t++;
 
-    EPwm2Regs.TBCTL.bit.HSPCLKDIV=2;
-    EPwm2Regs.TBPRD=1000;//set the TB period
-    EPwm2Regs.TBCTL.bit.CTRMODE=2;//TB mode,counter mode,period
-    EPwm2Regs.CMPA.bit.CMPA=700;//compare module,compare register
+      if (t >= 360) {
+          t = 0;
+           }
+           float Mod_index = 0.5;
+          duty = 1000*(1 + Mod_index*sin(2*pi*t/360));
 
-    EPwm3Regs.TBCTL.bit.HSPCLKDIV=2;
-    EPwm3Regs.TBPRD=1000;//set the TB period
-    EPwm3Regs.TBCTL.bit.CTRMODE=2;//TB mode,counter mode,period
-    EPwm3Regs.CMPA.bit.CMPA=700;//compare module,compare register
+           EPwm1Regs.ETCLR.bit.INT =  1;
 
-    EPwm1Regs.AQCTLA.bit.ZRO=1;//action qualifier
-    EPwm1Regs.AQCTLA.bit.CAU=2;
-    EPwm1Regs.TBCTL.bit.PRDLD=0;//prd value is given to shadow register
-    //EPwm1Regs.DBCTL.bit.IN_MODE=00;//S4 S5 configuration
-    //EPwm1Regs.DBCTL.bit.DEDB_MODE=0;//S8 configuration to zero
+           PieCtrlRegs.PIEACK.bit.ACK3 = 1;
 
-    EPwm2Regs.AQCTLA.bit.ZRO=1;//action qualifier
-    EPwm2Regs.AQCTLA.bit.CAU=2;
-    EPwm2Regs.TBCTL.bit.PRDLD=0;//prd value is given to shadow register
-    //EPwm2Regs.DBCTL.bit.IN_MODE=00;//S4 S5 configuration
-    //EPwm2Regs.DBCTL.bit.DEDB_MODE=0;//S8 configuration to zero
+   EDIS;
 
-    EPwm2Regs.AQCTLA.bit.ZRO=1;//action qualifier
-    EPwm2Regs.AQCTLA.bit.CAU=2;
-    EPwm2Regs.TBCTL.bit.PRDLD=0;//prd value is given to shadow register
-    //EPwm2Regs.DBCTL.bit.IN_MODE=00;//S4 S5 configuration
-    //EPwm2Regs.DBCTL.bit.DEDB_MODE=0;//S8 configuration to zero
 
-    EPwm1Regs.TBCTL.bit.PHSEN=1;//phase loading enable
-    EPwm2Regs.TBCTL.bit.PHSEN=1;
-    EPwm3Regs.TBCTL.bit.PHSEN=1;
+       }
 
-    EPwm1Regs.TBPHS.bit.TBPHS=500;
-    EPwm2Regs.TBPHS.bit.TBPHS=0;
-    EPwm3Regs.TBPHS.bit.TBPHS=0;
 
+__interrupt void epwm2ISR(void){
+   EALLOW;
 
-    CpuSysRegs.PCLKCR0.bit.TBCLKSYNC=1;//synchronization of the time base
+      t++;
 
-    EDIS;
+      if (t >= 360) {
+          t = 0;
+           }
+           float Mod_index = 0.5;
+          duty = 1000*(1 + Mod_index*sin(2*pi*t/360 + 120));
 
-}
-void adc_init(void)
-{
-    EALLOW;
-    CpuSysRegs.PCLKCR13.bit.ADC_A = 1;//Enable the peripheral clock
-    //ADC clock has to be given as 15Mhz assume system clk as 160Mhz 160/15 =9.6
-       AdcaRegs.ADCCTL2.bit.PRESCALE = 10;
 
-       //ADC  Resolution has to be set
-       AdcaRegs.ADCCTL2.bit.RESOLUTION = 0;
+           EPwm2Regs.ETCLR.bit.INT =  1;
 
-       //signal mode has to be specified single / differential
-       AdcaRegs.ADCCTL2.bit.SIGNALMODE= 0;
+           PieCtrlRegs.PIEACK.bit.ACK3 = 1;
 
-       //ADC power down has to be set 1(active low )
-       AdcaRegs.ADCCTL1.bit.ADCPWDNZ= 1;
+   EDIS;
 
-       //ADC pulse position has to be specified( 0 - raise interrupt at SOC, 1-raise the interrupt at EOC
-       AdcaRegs.ADCCTL1.bit.INTPULSEPOS =1;
 
-       //SOC channel select
-       AdcaRegs.ADCSOC7CTL.bit.CHSEL=7;
-       AdcaRegs.ADCSOC5CTL.bit.CHSEL=5;
-       AdcaRegs.ADCSOC2CTL.bit.CHSEL=2;
-       AdcaRegs.ADCSOC3CTL.bit.CHSEL=3;
+       }
 
-       //SOC trigger select
-       AdcaRegs.ADCSOC7CTL.bit.TRIGSEL=3;
-       AdcaRegs.ADCSOC5CTL.bit.TRIGSEL=3;
-       AdcaRegs.ADCSOC2CTL.bit.TRIGSEL=3;
-       AdcaRegs.ADCSOC3CTL.bit.TRIGSEL=3;
 
-       //SOC Acquisition selection (sampling period / system period)-1
-       AdcaRegs.ADCSOC4CTL.bit.ACQPS=19;
-       AdcaRegs.ADCSOC5CTL.bit.ACQPS=19;
-       AdcaRegs.ADCSOC2CTL.bit.ACQPS=19;
-       AdcaRegs.ADCSOC3CTL.bit.ACQPS=19;
 
+__interrupt void epwm3ISR(void){
+   EALLOW;
 
-       //configure ADC interrupt in continuous mode
-       AdcaRegs.ADCINTSEL1N2.bit.INT1CONT =1;
-       //Select which channel as to be ADC interrupt
-       AdcaRegs.ADCINTSEL1N2.bit.INT1SEL = 5;
-       //ADC interrupt has to be Enabled
-       AdcaRegs.ADCINTSEL1N2.bit.INT1E = 1;
-       //ADC interrupt flag has to be cleared
-       EPwm1Regs.CMPA.bit.CMPA=700;
-       EDIS;
-}
-interrupt void ADCISR(void)
-{
-   Result[0] = AdcaResultRegs.ADCRESULT7; //14 volts in terms of 4096
-   Result[1] = Result[0]*0.0034//4096*14/4096
-   Result[1]  = AdcaResultRegs.ADCRESULT5;
+      t++;
 
-   CpuTimer1Regs.TCR.bit.TIF=1;
-      PieCtrlRegs.PIEACK.bit.ACK1=1;
+      if (t >= 360) {
+          t = 0;
+           }
+           float Mod_index = 0.5;
+          duty = 1000*(1 + Mod_index*sin(2*pi*t/360));
 
-      //ADC interrupt flag has to be cleared
-      AdcaRegs.ADCINTFLGCLR.bit.ADCINT1=1;
-}
-   float pid_init(){
-       kp =6;
-       kd =4 ;
-       ki =2 ;
-       float error=set_value-current_value;
-       integral+=(error*time_change);
-       float derivative=(error-previous_error)/time_change;
-       output=kp*error+ki*integral+kd*derivative;
-       previous_error=error;
-   }
+           EPwm3Regs.ETCLR.bit.INT =  1;
+           PieCtrlRegs.PIEACK.bit.ACK3 = 1;
 
+   EDIS;
 
 
+       }
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-          ] = AdcaResultRegs.ADCRESULT2;
-
-
-
-   CpuTimer1Regs.TCR.bit.TIF=1;
-   PieCtrlRegs.PIEACK.bit.ACK1=1;
-
-   //ADC interrupt flag has to be cleared
-   AdcaRegs.ADCINTFLGCLR.bit.ADCINT1=1;
-}
-
-
-    void sysctl(void)
-
-{
-    int i;
-    EALLOW;
-    ClkCfgRegs.CLKSRCCTL1.bit.OSCCLKSRCSEL = 0;
-    ClkCfgRegs.SYSPLLCTL1.bit.PLLCLKEN = 0;
-    for(i=0;i<5;i++)
-    {
-        ClkCfgRegs.SYSPLLCTL1.bit.PLLEN = 0;
-        ClkCfgRegs.SYSPLLMULT.bit.IMULT = 16;
-        ClkCfgRegs.SYSPLLMULT.bit.FMULT = 2;
-        while(ClkCfgRegs.SYSPLLSTS.bit.LOCKS !=1);
-    }
-    ClkCfgRegs.SYSCLKDIVSEL.bit.PLLSYSCLKDIV = 1;
-    ClkCfgRegs.SYSPLLCTL1.bit.PLLCLKEN = 1;
-    ClkCfgRegs.SYSCLKDIVSEL.bit.PLLSYSCLKDIV = 0;
-    ClkCfgRegs.LOSPCP.bit.LSPCLKDIV = 0;
-    EDIS;
-}
